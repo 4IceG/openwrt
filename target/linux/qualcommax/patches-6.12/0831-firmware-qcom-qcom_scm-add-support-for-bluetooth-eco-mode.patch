@@ -1,0 +1,59 @@
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -855,6 +855,36 @@ int qcom_scm_internal_wifi_shutdown(u32
+ }
+ EXPORT_SYMBOL(qcom_scm_internal_wifi_shutdown);
+ 
++int qcom_scm_set_bluetooth_eco_mode(u32 peripheral, bool enable) {
++		int ret;
++	struct qcom_scm_desc desc = {
++		.svc = QCOM_SCM_SVC_PIL,
++		.cmd = QCOM_SCM_BLUETOOTH_ECO_MODE,
++		.arginfo = QCOM_SCM_ARGS(2),
++		.args[0] = peripheral,
++		.args[1] = enable,
++		.owner = ARM_SMCCC_OWNER_SIP,
++	};
++	struct qcom_scm_res res;
++
++	ret = qcom_scm_clk_enable();
++	if (ret)
++		return ret;
++
++	ret = qcom_scm_bw_enable();
++	if (ret)
++		goto disable_clk;
++
++	ret = qcom_scm_call(__scm->dev, &desc, &res);
++	qcom_scm_bw_disable();
++
++disable_clk:
++	qcom_scm_clk_disable();
++
++	return ret ? : res.result[0];
++}
++EXPORT_SYMBOL_GPL(qcom_scm_set_bluetooth_eco_mode);
++
+ /**
+  * qcom_scm_pas_load_segment() - copy userpd PIL segments data to dma blocks
+  * @peripheral:		peripheral id
+--- a/drivers/firmware/qcom/qcom_scm.h
++++ b/drivers/firmware/qcom/qcom_scm.h
+@@ -105,6 +105,7 @@ struct qcom_tzmem_pool *qcom_scm_get_tzm
+ #define QCOM_SCM_INTERNAL_WIFI_POWERUP	0x17
+ #define QCOM_SCM_INTERNAL_WIFI_SHUTDOWN	0x18
+ #define QCOM_SCM_PIL_PAS_LOAD_SEG	0x19
++#define QCOM_SCM_BLUETOOTH_ECO_MODE	0x21
+ #define QCOM_SCM_MSA_LOCK		0x24
+ #define QCOM_SCM_MSA_UNLOCK		0x25
+ 
+--- a/include/linux/firmware/qcom/qcom_scm.h
++++ b/include/linux/firmware/qcom/qcom_scm.h
+@@ -79,6 +79,7 @@ int qcom_scm_pas_mem_setup(u32 periphera
+ int qcom_scm_pas_auth_and_reset(u32 peripheral);
+ int qcom_scm_pas_shutdown(u32 peripheral);
+ bool qcom_scm_pas_supported(u32 peripheral);
++int qcom_scm_set_bluetooth_eco_mode(u32 peripheral, bool enable);
+ int qcom_scm_internal_wifi_powerup(u32 peripheral);
+ int qcom_scm_internal_wifi_shutdown(u32 peripheral);
+ int qcom_scm_pas_load_segment(u32 peripheral, int segment, dma_addr_t dma, int seg_cnt);

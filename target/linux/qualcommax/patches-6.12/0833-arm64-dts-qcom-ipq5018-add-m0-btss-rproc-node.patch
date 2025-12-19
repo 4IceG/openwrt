@@ -1,0 +1,36 @@
+--- a/arch/arm64/boot/dts/qcom/ipq5018.dtsi
++++ b/arch/arm64/boot/dts/qcom/ipq5018.dtsi
+@@ -136,6 +136,11 @@
+ 		#size-cells = <2>;
+ 		ranges;
+ 
++		btss_region: btss@7000000 {
++			reg = <0x0 0x07000000 0x0 0x58000>;
++			no-map;
++		};
++
+ 		tz_apps@4a400000 {
+ 			reg = <0x0 0x4a400000 0x0 0x400000>;
+ 			no-map;
+@@ -490,6 +495,21 @@
+ 			status = "disabled";
+ 		};
+ 
++		m0_btss: remoteproc {
++			compatible = "qcom,ipq5018-btss-pil";
++			reg = <0x01943080 0x8>;
++			reg-names = "btss_warm_reset";
++			firmware-name = "qca/bt_fw_patch.mdt";
++
++			clocks = <&gcc GCC_BTSS_LPO_CLK>;
++			clock-names = "btss_lpo_clk";
++
++			resets = <&gcc GCC_BTSS_BCR>;
++			reset-names = "btss_reset";
++
++			memory-region = <&btss_region>;
++		};
++
+ 		sdhc_1: mmc@7804000 {
+ 			compatible = "qcom,ipq5018-sdhci", "qcom,sdhci-msm-v5";
+ 			reg = <0x7804000 0x1000>;
