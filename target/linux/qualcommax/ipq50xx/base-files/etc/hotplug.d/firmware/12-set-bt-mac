@@ -1,0 +1,32 @@
+#!/bin/sh
+
+board=$(board_name)
+
+bluetooth_patch_mac() {
+	mac=$1
+	fw_mac=$(hexdump -v -n 6 -s 16 -e '5/1 "%02x:" 1/1 "%02x"' /lib/firmware/${FIRMWARE} | awk -F: '{printf "%s:%s:%s:%s:%s:%s", $6, $5, $4, $3, $2, $1}')
+	if [ ! $mac = $fw_mac ]; then
+		printf $(echo $mac | awk -F: '{printf "\\x%s\\x%s\\x%s\\x%s\\x%s\\x%s",$6,$5,$4,$3,$2,$1}') | dd of=/lib/firmware/${FIRMWARE} seek=16 count=6 bs=1 conv=notrunc 2>/dev/null
+		echo "Bluetooth MAC Address updated: ${mac}"
+	fi
+}
+
+case "$FIRMWARE" in
+"qca/mpnv10.bin")
+	if [ -e "/lib/firmware/$FIRMWARE" ]; then
+		case "$board" in
+		linksys,mr5500|\
+		linksys,mx2000|\
+		linksys,mx5500|\
+		linksys,mx6200|\
+		linksys,spnmx56)	
+			label_mac=$(mtd_get_mac_ascii devinfo hw_mac_addr)
+			bluetooth_patch_mac $label_mac
+			;;
+		esac
+	fi
+	;;
+*)
+	exit 1
+	;;
+esac
