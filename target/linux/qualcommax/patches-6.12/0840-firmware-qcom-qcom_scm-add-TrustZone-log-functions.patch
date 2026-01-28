@@ -1,0 +1,304 @@
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -1720,6 +1720,249 @@ static int qcom_scm_find_dload_address(s
+ 	return 0;
+ }
+ 
++/**
++ * qcom_scm_get_smmustate () - Get SMMU state
++ * @svc_id: SCM service id
++ * @cmd_id: SCM command id
++ *
++ * Returns 0 - SMMU_DISABLE_NONE
++ *	   1 - SMMU_DISABLE_S2
++ *	   2 - SMMU_DISABLE_ALL on success.
++ *	  -1 - Failure
++ */
++static int __qcom_scm_get_smmustate(struct device *dev, u32 svc_id, u32 cmd_id)
++{
++	int ret;
++	struct qcom_scm_res res;
++	struct qcom_scm_desc desc = {
++		.svc = svc_id,
++		.cmd = cmd_id,
++		.arginfo = QCOM_SCM_ARGS(0),
++		.owner = ARM_SMCCC_OWNER_SIP,
++	};
++
++	ret = qcom_scm_call(dev, &desc, &res);
++
++	return ret ? -1 : res.result[0];
++}
++
++/**
++ * qcom_scm_get_smmustate () - Get SMMU state
++ *
++ * Returns 0 - SMMU_DISABLE_NONE
++ *	   1 - SMMU_DISABLE_S2
++ *	   2 - SMMU_DISABLE_ALL on success.
++ *	  -1 - Failure
++ */
++int qcom_scm_get_smmustate(void)
++{
++	int ret;
++
++	ret = qcom_scm_clk_enable();
++	if (ret)
++		return ret;
++
++	ret = __qcom_scm_get_smmustate(__scm->dev, QCOM_SCM_SVC_BOOT,
++				      QCOM_SCM_SMMUSTATE);
++	qcom_scm_clk_disable();
++
++	return ret;
++}
++EXPORT_SYMBOL(qcom_scm_get_smmustate);
++
++/**
++ * qcom_scm_tz_hvc_log() - Get trustzone diag log or hypervisor diag log
++ * @svc_id: SCM service id
++ * @cmd_id: SCM command id
++ * ker_buf: kernel buffer to store the diag log
++ * buf_len: kernel buffer length
++ *
++ * This function can be used to get either the trustzone diag log
++ * or the hypervisor diag log based on the command id passed to this
++ * function.
++ */
++static int __qcom_scm_tz_hvc_log(struct device *dev, u32 svc_id, u32 cmd_id,
++			 void *ker_buf, u32 buf_len)
++{
++	int ret;
++	dma_addr_t dma_buf;
++	struct qcom_scm_res res;
++
++	dma_buf = dma_map_single(dev, ker_buf, buf_len, DMA_FROM_DEVICE);
++
++	ret = dma_mapping_error(dev, dma_buf);
++	if (ret != 0) {
++		pr_err("DMA Mapping Error : %d\n", ret);
++		return ret;
++	}
++
++	struct qcom_scm_desc desc = {
++		.svc = svc_id,
++		.cmd = cmd_id,
++		.args[0] = dma_buf,
++		.args[1] = buf_len,
++		.arginfo = QCOM_SCM_ARGS(2, QCOM_SCM_RW, QCOM_SCM_VAL),
++		.owner = ARM_SMCCC_OWNER_SIP,
++	};
++
++	ret = qcom_scm_call(dev, &desc, &res);
++
++	dma_unmap_single(dev, dma_buf, buf_len, DMA_FROM_DEVICE);
++
++	return ret ? : res.result[0];
++}
++
++/**
++ * qcom_scm_tz_log() - Get trustzone diag log
++ * ker_buf: kernel buffer to store the diag log
++ * buf_len: kernel buffer length
++ *
++ * Return negative errno on failure or 0 on success. Diag log will
++ * be present in the kernel buffer passed.
++ */
++int qcom_scm_tz_log(void *ker_buf, u32 buf_len)
++{
++	return __qcom_scm_tz_hvc_log(__scm->dev, QCOM_SCM_SVC_INFO,
++				     QCOM_SCM_TZ_DIAG, ker_buf, buf_len);
++}
++EXPORT_SYMBOL(qcom_scm_tz_log);
++
++/**
++ * qcom_scm_hvc_log() - Get hypervisor diag log
++ * ker_buf: kernel buffer to store the diag log
++ * buf_len: kernel buffer length
++ *
++ * Return negative errno on failure or 0 on success. Diag log will
++ * be present in the kernel buffer passed.
++ */
++int qcom_scm_hvc_log(void *ker_buf, u32 buf_len)
++{
++	return __qcom_scm_tz_hvc_log(__scm->dev, QCOM_SCM_SVC_INFO,
++				    QCOM_SCM_HVC_DIAG, ker_buf, buf_len);
++}
++EXPORT_SYMBOL_GPL(qcom_scm_hvc_log);
++
++static int __qcom_scm_is_tz_log_encrypted(struct device *dev)
++{
++	int ret;
++	struct qcom_scm_res res;
++	struct qcom_scm_desc desc = {
++		.svc = QCOM_SCM_SVC_BOOT,
++		.cmd = QCOM_SCM_IS_TZ_LOG_ENCRYPTED,
++		.arginfo = QCOM_SCM_ARGS(0),
++		.owner = ARM_SMCCC_OWNER_TRUSTED_OS,
++	};
++
++	ret = qcom_scm_call(dev, &desc, &res);
++
++	return ret ? : res.result[0];
++}
++
++static int __qcom_scm_get_encrypted_tz_log(struct device *dev, void *ker_buf,
++				   u32 buf_len, u32 log_id)
++{
++	int ret;
++	dma_addr_t log_buf;
++	struct qcom_scm_res res;
++
++	log_buf = dma_map_single(dev, ker_buf, buf_len, DMA_FROM_DEVICE);
++	ret = dma_mapping_error(dev, log_buf);
++
++	if (ret) {
++		dev_err(dev, "DMA Mapping error: %d\n", ret);
++		return ret;
++	}
++
++	struct qcom_scm_desc desc = {
++		.svc = QCOM_SCM_SVC_BOOT,
++		.cmd = QCOM_SCM_GET_TZ_LOG_ENCRYPTED,
++		.args[0] = log_buf,
++		.args[1] = buf_len,
++		.args[2] = log_id,
++		.arginfo = QCOM_SCM_ARGS(3, QCOM_SCM_RW, QCOM_SCM_VAL, QCOM_SCM_VAL),
++		.owner = ARM_SMCCC_OWNER_TRUSTED_OS,
++	};
++
++	ret = qcom_scm_call(dev, &desc, &res);
++
++	dma_unmap_single(dev, log_buf, buf_len, DMA_FROM_DEVICE);
++	return ret ? : res.result[0];
++}
++
++int qcom_scm_is_tz_log_encryption_supported(void)
++{
++	int ret;
++
++	ret = __qcom_scm_is_call_available(__scm->dev, QCOM_SCM_SVC_BOOT,
++					   QCOM_SCM_IS_TZ_LOG_ENCRYPTED);
++
++	return (ret == 1) ? 1 : 0;
++}
++EXPORT_SYMBOL_GPL(qcom_scm_is_tz_log_encryption_supported);
++
++int qcom_scm_is_tz_log_encrypted(void)
++{
++	int ret;
++
++	ret = __qcom_scm_is_tz_log_encrypted(__scm->dev);
++
++	return (ret == 1) ? 1 : 0;
++}
++EXPORT_SYMBOL_GPL(qcom_scm_is_tz_log_encrypted);
++
++int qcom_scm_get_encrypted_tz_log(void *ker_buf, u32 buf_len, u32 log_id)
++{
++	return __qcom_scm_get_encrypted_tz_log(__scm->dev, ker_buf, buf_len, log_id);
++}
++EXPORT_SYMBOL_GPL(qcom_scm_get_encrypted_tz_log);
++
++static int __qcom_qfprom_show_authenticate(struct device *dev, char *buf)
++{
++	int ret;
++	struct qcom_scm_res res;
++	dma_addr_t auth_phys;
++	void *auth_buf;
++
++	auth_buf = dma_alloc_coherent(dev, sizeof(*buf),
++					&auth_phys, GFP_KERNEL);
++	if (!auth_buf) {
++		dev_err(dev, "Allocation for auth buffer failed\n");
++		return -ENOMEM;
++	}
++	struct qcom_scm_desc desc = {
++		.svc = QCOM_SCM_SVC_FUSE,
++		.cmd = QCOM_QFPROM_IS_AUTHENTICATE,
++		.args[0] = (u64)auth_phys,
++		.args[1] = sizeof(char),
++		.arginfo = QCOM_SCM_ARGS(2, QCOM_SCM_RO),
++		.owner = ARM_SMCCC_OWNER_SIP,
++	};
++	ret = qcom_scm_call(dev, &desc, &res);
++	memcpy(buf, auth_buf, sizeof(char));
++	dma_free_coherent(dev, sizeof(*buf), auth_buf, auth_phys);
++	
++	return ret ? : res.result[0];
++}
++
++/**
++ * qcom_qfprom_show_authenticate() - Check secure boot fuse is enabled
++ */
++int qcom_qfprom_show_authenticate(void)
++{
++	int ret;
++	char buf;
++
++	ret = __qcom_qfprom_show_authenticate(__scm->dev, &buf);
++
++	if (ret) {
++		pr_err("%s: Error in QFPROM read : %d\n", __func__, ret);
++		return -1;
++	}
++
++	return buf == 1 ? 1 : 0;
++}
++EXPORT_SYMBOL(qcom_qfprom_show_authenticate);
++
+ #ifdef CONFIG_QCOM_QSEECOM
+ 
+ /* Lock for QSEECOM SCM call executions */
+--- a/drivers/firmware/qcom/qcom_scm.h
++++ b/drivers/firmware/qcom/qcom_scm.h
+@@ -88,6 +88,8 @@ struct qcom_tzmem_pool *qcom_scm_get_tzm
+ #define QCOM_SCM_BOOT_SET_DLOAD_MODE	0x10
+ #define QCOM_SCM_BOOT_SET_ADDR_MC	0x11
+ #define QCOM_SCM_BOOT_SET_REMOTE_STATE	0x0a
++#define QCOM_SCM_IS_TZ_LOG_ENCRYPTED	0x0b
++#define QCOM_SCM_GET_TZ_LOG_ENCRYPTED	0x0c
+ #define QCOM_SCM_FLUSH_FLAG_MASK	0x3
+ #define QCOM_SCM_BOOT_MAX_CPUS		4
+ #define QCOM_SCM_BOOT_MC_FLAG_AARCH64	BIT(0)
+@@ -115,6 +117,12 @@ struct qcom_tzmem_pool *qcom_scm_get_tzm
+ 
+ #define QCOM_SCM_SVC_INFO		0x06
+ #define QCOM_SCM_INFO_IS_CALL_AVAIL	0x01
++#define QCOM_SCM_TZ_DIAG		0x02
++#define QCOM_SCM_HVC_DIAG		0x07
++#define QCOM_SCM_SMMUSTATE		0x19
++
++#define QCOM_SCM_SVC_FUSE		0x08
++#define QCOM_QFPROM_IS_AUTHENTICATE	0x07
+ 
+ #define QCOM_SCM_SVC_MP				0x0c
+ #define QCOM_SCM_MP_RESTORE_SEC_CFG		0x02
+--- a/include/linux/firmware/qcom/qcom_scm.h
++++ b/include/linux/firmware/qcom/qcom_scm.h
+@@ -16,6 +16,10 @@
+ #define QCOM_SCM_CPU_PWR_DOWN_L2_OFF	0x1
+ #define QCOM_SCM_HDCP_MAX_REQ_CNT	5
+ 
++#define QCOM_TZ_DIAG_LOG_ENCR_ID	0x0
++#define QCOM_TZ_QSEE_LOG_ENCR_ID	0x1
++#define QCOM_TZ_LOG_NO_UPDATE		-6
++
+ struct qcom_scm_hdcp_req {
+ 	u32 addr;
+ 	u32 val;
+@@ -121,6 +125,14 @@ int qcom_scm_lmh_dcvsh(u32 payload_fn, u
+ int qcom_scm_lmh_profile_change(u32 profile_id);
+ bool qcom_scm_lmh_dcvsh_available(void);
+ 
++int qcom_scm_tz_log(void *ker_buf, u32 buf_len);
++int qcom_scm_hvc_log(void *ker_buf, u32 buf_len);
++int qcom_scm_get_smmustate(void);
++int qcom_scm_is_tz_log_encrypted(void);
++int qcom_scm_get_encrypted_tz_log(void *ker_buf, u32 buf_len, u32 log_id);
++int qcom_scm_is_tz_log_encryption_supported(void);
++int qcom_qfprom_show_authenticate(void);
++
+ /*
+  * Request TZ to program set of access controlled registers necessary
+  * irrespective of any features

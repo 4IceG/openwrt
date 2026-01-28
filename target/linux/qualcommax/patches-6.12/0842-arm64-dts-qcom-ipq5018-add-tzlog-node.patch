@@ -1,0 +1,17 @@
+--- a/arch/arm64/boot/dts/qcom/ipq5018.dtsi
++++ b/arch/arm64/boot/dts/qcom/ipq5018.dtsi
+@@ -1216,6 +1216,14 @@
+ 			     <GIC_PPI 1 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>;
+ 	};
+ 
++	tzlog {
++		compatible = "qcom,tzlog";
++		interrupts = <GIC_SPI 267 IRQ_TYPE_EDGE_RISING>;
++		qti,tz-diag-buf-size = <0x2000>;
++		qti,tz-ring-off = <7>;
++		qti,tz-log-pos-info-off = <455>;
++	};
++
+ 	wcss: smp2p-wcss {
+ 		compatible = "qcom,smp2p";
+ 		qcom,smem = <435>, <428>;
